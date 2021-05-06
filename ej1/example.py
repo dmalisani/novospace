@@ -62,10 +62,33 @@ class Incrementador(Elaboratable):
         comb += self.a.ready.eq((~self.r.valid) | (self.r.accepted()))
         return m
 
+class Sumador(Elaboratable):
+    def __init__(self, width):
+        self.a = Stream(width, name='a')
+        self.b = Stream(width, name='b')
+        self.r = Stream(width+1, name='r')
+
+    def elaborate(self, platform):
+        m = Module()
+        sync = m.d.sync
+        comb = m.d.comb
+
+        with m.If(self.r.accepted()):
+            sync += self.r.valid.eq(0)
+
+        with m.If(self.a.accepted() | self.b.accepted()):
+            sync += [
+                self.r.valid.eq(1),
+                self.r.data.eq(self.a.data + self.b.data)
+            ]
+        comb += self.a.ready.eq((~self.r.valid) | (self.r.accepted()))
+        comb += self.b.ready.eq((~self.r.valid) | (self.r.accepted()))
+        return m
 
 async def init_test(dut):
     cocotb.fork(Clock(dut.clk, 10, 'ns').start())
     dut.rst <= 1
+    await RisingEdge(dut.clk)
     await RisingEdge(dut.clk)
     await RisingEdge(dut.clk)
     dut.rst <= 0
@@ -75,28 +98,34 @@ async def init_test(dut):
 async def burst(dut):
     await init_test(dut)
 
-    stream_input = Stream.Driver(dut.clk, dut, 'a__')
+    stream_input_a = Stream.Driver(dut.clk, dut, 'a__')
+    stream_input_b = Stream.Driver(dut.clk, dut, 'b__')
     stream_output = Stream.Driver(dut.clk, dut, 'r__')
 
-    N = 100
+    N = 5
     width = len(dut.a__data)
-    mask = int('1' * width, 2)
+    # mask = int('1' * width, 2)
 
-    data = [getrandbits(width) for _ in range(N)]
-    expected = [(d + 1) & mask for d in data]
-    cocotb.fork(stream_input.send(data))
+    data_a = [getrandbits(width) for _ in range(N)]
+    data_b = [getrandbits(width) for _ in range(N)]
+    expected = [(a + b) for a,b in zip(data_a, data_b)]
+    cocotb.fork(stream_input_a.send(data_a))
+    cocotb.fork(stream_input_b.send(data_b))
     recved = await stream_output.recv(N)
-    assert recved == expected
+    
+    assert recved == expected, f"found {recved} - {expected} ({data_a} {data_b})"
+
 
 
 if __name__ == '__main__':
-    core = Incrementador(5)
+    core = Sumador(3)
     run(
         core, 'example',
         ports=
         [
             *list(core.a.fields.values()),
+            *list(core.b.fields.values()),
             *list(core.r.fields.values())
         ],
-        vcd_file='incrementador.vcd'
+        vcd_file='sumador.vcd'
     )
