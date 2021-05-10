@@ -68,6 +68,7 @@ class Sumador(Elaboratable):
         self.b = Stream(width, name='b')
         self.r = Stream(width+1, name='r')
 
+
     def elaborate(self, platform):
         m = Module()
         sync = m.d.sync
@@ -81,9 +82,21 @@ class Sumador(Elaboratable):
                 self.r.valid.eq(1),
                 self.r.data.eq(self.a.data + self.b.data)
             ]
+        
+
         comb += self.a.ready.eq((~self.r.valid) | (self.r.accepted()))
         comb += self.b.ready.eq((~self.r.valid) | (self.r.accepted()))
         return m
+
+def _to_c2_if_negative(value, width):
+    signed_mask = 2 ** (width - 1)
+    negative = (value & signed_mask) > 0
+    if negative:
+        absolute = (value & ~signed_mask)
+        value = ~absolute + 1
+    return value
+
+     
 
 async def init_test(dut):
     cocotb.fork(Clock(dut.clk, 10, 'ns').start())
@@ -95,16 +108,15 @@ async def init_test(dut):
 
 
 @cocotb.test()
-async def burst(dut):
+async def corrida_normal(dut):
     await init_test(dut)
 
     stream_input_a = Stream.Driver(dut.clk, dut, 'a__')
     stream_input_b = Stream.Driver(dut.clk, dut, 'b__')
     stream_output = Stream.Driver(dut.clk, dut, 'r__')
 
-    N = 5
+    N = 50
     width = len(dut.a__data)
-    # mask = int('1' * width, 2)
 
     data_a = [getrandbits(width) for _ in range(N)]
     data_b = [getrandbits(width) for _ in range(N)]
@@ -114,6 +126,26 @@ async def burst(dut):
     recved = await stream_output.recv(N)
     
     assert recved == expected, f"found {recved} - {expected} ({data_a} {data_b})"
+
+
+@cocotb.test()
+async def negativos(dut):
+    await init_test(dut)
+
+    stream_input_a = Stream.Driver(dut.clk, dut, 'a__')
+    stream_input_b = Stream.Driver(dut.clk, dut, 'b__')
+    stream_output = Stream.Driver(dut.clk, dut, 'r__')
+    x = dut.signal.signed_integer(-42)
+    data_a = [x, -2, -5, -7]
+    data_b = [-3, -2, -1, -3]
+    expected = [x, -4, -6, -10]
+
+    cocotb.fork(stream_input_a.send(data_a))
+    cocotb.fork(stream_input_b.send(data_b))
+    recved = await stream_output.recv(4)
+    
+    assert recved == expected, f"found {recved} - {expected} ({data_a} {data_b})"
+
 
 
 
