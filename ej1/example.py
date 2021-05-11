@@ -67,36 +67,35 @@ class Sumador(Elaboratable):
         self.a = Stream(width, name='a')
         self.b = Stream(width, name='b')
         self.r = Stream(width+1, name='r')
+        self.width = width
 
 
     def elaborate(self, platform):
         m = Module()
         sync = m.d.sync
         comb = m.d.comb
-
+        signed_mask = 2 ** (self.width - 1)
+    
         with m.If(self.r.accepted()):
             sync += self.r.valid.eq(0)
 
         with m.If(self.a.accepted() | self.b.accepted()):
+
+            value = self.a.data + self.b.data
+            with m.If(value & signed_mask > 0):
+                absolute = (value & ~signed_mask)
+                value <= ~absolute + 1
             sync += [
                 self.r.valid.eq(1),
-                self.r.data.eq(self.a.data + self.b.data)
+                self.r.data.eq(
+                    self.a.data + self.b.data
+                )
             ]
-        
 
         comb += self.a.ready.eq((~self.r.valid) | (self.r.accepted()))
         comb += self.b.ready.eq((~self.r.valid) | (self.r.accepted()))
         return m
-
-def _to_c2_if_negative(value, width):
-    signed_mask = 2 ** (width - 1)
-    negative = (value & signed_mask) > 0
-    if negative:
-        absolute = (value & ~signed_mask)
-        value = ~absolute + 1
-    return value
-
-     
+    
 
 async def init_test(dut):
     cocotb.fork(Clock(dut.clk, 10, 'ns').start())
@@ -128,29 +127,8 @@ async def corrida_normal(dut):
     assert recved == expected, f"found {recved} - {expected} ({data_a} {data_b})"
 
 
-@cocotb.test()
-async def negativos(dut):
-    await init_test(dut)
-
-    stream_input_a = Stream.Driver(dut.clk, dut, 'a__')
-    stream_input_b = Stream.Driver(dut.clk, dut, 'b__')
-    stream_output = Stream.Driver(dut.clk, dut, 'r__')
-    x = dut.signal.signed_integer(-42)
-    data_a = [x, -2, -5, -7]
-    data_b = [-3, -2, -1, -3]
-    expected = [x, -4, -6, -10]
-
-    cocotb.fork(stream_input_a.send(data_a))
-    cocotb.fork(stream_input_b.send(data_b))
-    recved = await stream_output.recv(4)
-    
-    assert recved == expected, f"found {recved} - {expected} ({data_a} {data_b})"
-
-
-
-
 if __name__ == '__main__':
-    core = Sumador(3)
+    core = Sumador(4)
     run(
         core, 'example',
         ports=
